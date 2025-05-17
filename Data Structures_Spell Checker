@@ -1,1 +1,259 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <ctype.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#define CLEAR_COMMAND "cls"
+#else
+#endif
+
+#define MAX_PHRASES 100
+#define MAX_PHRASE_LENGTH 256
+#define KALIMAT_FILE "kalimat.txt"
+#define REKOR_FILE "rekor.txt"
+
+char kalimat_list[MAX_PHRASES][MAX_PHRASE_LENGTH];
+int jumlah_kalimat = 0;
+
+void clear_screen() {
+    system(CLEAR_COMMAND);
+}
+
+void wait(int seconds) {
+    #ifdef _WIN32
+    Sleep(seconds * 1000);
+    #else
+    sleep(seconds);
+    #endif
+}
+
+void load_kalimat() {
+    FILE* file = fopen(KALIMAT_FILE, "r");
+    if (!file) return;
+
+    jumlah_kalimat = 0;
+    while (fgets(kalimat_list[jumlah_kalimat], MAX_PHRASE_LENGTH, file) && jumlah_kalimat < MAX_PHRASES) {
+        kalimat_list[jumlah_kalimat][strcspn(kalimat_list[jumlah_kalimat], "\n")] = '\0';
+        jumlah_kalimat++;
+    }
+    fclose(file);
+}
+
+void save_kalimat() {
+    FILE* file = fopen(KALIMAT_FILE, "w");
+    if (!file) return;
+
+    for (int i = 0; i < jumlah_kalimat; i++) {
+        fprintf(file, "%s\n", kalimat_list[i]);
+    }
+    fclose(file);
+}
+
+void kelola_kalimat() {
+    int pilihan;
+    char input[MAX_PHRASE_LENGTH];
+    int idx;
+
+    while (1) {
+        clear_screen();
+        printf("=== MANAJEMEN KALIMAT ===\n");
+        printf("1. Lihat Kalimat\n");
+        printf("2. Tambah Kalimat\n");
+        printf("3. Edit Kalimat\n");
+        printf("4. Hapus Kalimat\n");
+        printf("5. Kembali\n");
+        printf("Pilih: ");
+        scanf("%d", &pilihan);
+        getchar();
+
+        switch (pilihan) {
+            case 1:
+                clear_screen();
+                printf("--- Daftar Kalimat ---\n");
+                for (int i = 0; i < jumlah_kalimat; i++) {
+                    printf("%d. %s\n", i + 1, kalimat_list[i]);
+                }
+                printf("\nTekan Enter untuk kembali...");
+                getchar();
+                break;
+            case 2:
+                if (jumlah_kalimat >= MAX_PHRASES) break;
+                printf("Masukkan kalimat baru: ");
+                fgets(input, MAX_PHRASE_LENGTH, stdin);
+                input[strcspn(input, "\n")] = '\0';
+                strcpy(kalimat_list[jumlah_kalimat++], input);
+                save_kalimat();
+                break;
+            case 3:
+                printf("Nomor kalimat yang ingin diedit: ");
+                scanf("%d", &idx);
+                getchar();
+                if (idx < 1 || idx > jumlah_kalimat) break;
+                printf("Kalimat baru: ");
+                fgets(input, MAX_PHRASE_LENGTH, stdin);
+                input[strcspn(input, "\n")] = '\0';
+                strcpy(kalimat_list[idx - 1], input);
+                save_kalimat();
+                break;
+            case 4:
+                printf("Nomor kalimat yang ingin dihapus: ");
+                scanf("%d", &idx);
+                getchar();
+                if (idx < 1 || idx > jumlah_kalimat) break;
+                for (int i = idx - 1; i < jumlah_kalimat - 1; i++) {
+                    strcpy(kalimat_list[i], kalimat_list[i + 1]);
+                }
+                jumlah_kalimat--;
+                save_kalimat();
+                break;
+            case 5:
+                return;
+        }
+    }
+}
+
+void simpan_rekor(const char* mode, float akurasi, float wpm) {
+    FILE* file = fopen(REKOR_FILE, "a");
+    if (!file) return;
+    time_t now = time(NULL);
+    fprintf(file, "%s | %.2f%% | %.2f WPM | %s", mode, akurasi, wpm, ctime(&now));
+    fclose(file);
+}
+
+void tampilkan_rekor() {
+    clear_screen();
+    FILE* file = fopen(REKOR_FILE, "r");
+    if (!file) {
+        printf("Belum ada rekor.\n");
+    } else {
+        char line[256];
+        printf("=== DAFTAR REKOR ===\n\n");
+        while (fgets(line, sizeof(line), file)) {
+            printf("%s", line);
+        }
+        fclose(file);
+    }
+    printf("\nTekan Enter untuk kembali...");
+    while (getchar() != '\n');
+}
+
+void timed_challenge() {
+    clear_screen();
+    printf("=== MODE TANTANGAN WAKTU ===\n\n");
+    int start = time(NULL);
+    int duration = 60;
+    int word_count = 0;
+    char input[MAX_PHRASE_LENGTH];
+    int correct_chars = 0;
+    int total_chars = 0;
+
+    while (time(NULL) - start < duration && jumlah_kalimat > 0) {
+        int idx = rand() % jumlah_kalimat;
+        const char* phrase = kalimat_list[idx];
+
+        printf("\nKetik kalimat: %s\n", phrase);
+        printf("> ");
+        fgets(input, MAX_PHRASE_LENGTH, stdin);
+        input[strcspn(input, "\n")] = '\0';
+
+        int len = strlen(phrase);
+        for (int i = 0; i < len && input[i]; i++) {
+            if (input[i] == phrase[i]) correct_chars++;
+            total_chars++;
+        }
+        word_count++;
+    }
+
+    float accuracy = total_chars > 0 ? (100.0 * correct_chars / total_chars) : 0.0;
+    float wpm = word_count * (60.0);
+
+    printf("\nWaktu habis!\nAkurasi: %.2f%%\nKecepatan: %.2f WPM\n", accuracy, wpm);
+    simpan_rekor("Tantangan Waktu", accuracy, wpm);
+    printf("\nTekan Enter untuk kembali...");
+    while (getchar() != '\n');
+}
+
+void accuracy_challenge() {
+    clear_screen();
+    printf("=== MODE TANTANGAN AKURASI ===\n\n");
+    if (jumlah_kalimat == 0) return;
+    int idx = rand() % jumlah_kalimat;
+    const char* phrase = kalimat_list[idx];
+
+    printf("Ketik kalimat berikut dengan akurat:\n%s\n", phrase);
+    char input[MAX_PHRASE_LENGTH];
+    printf("> ");
+    fgets(input, MAX_PHRASE_LENGTH, stdin);
+    input[strcspn(input, "\n")] = '\0';
+
+    int correct = 0;
+    int total = strlen(phrase);
+    for (int i = 0; i < total; i++) {
+        if (input[i] == phrase[i]) correct++;
+    }
+    float accuracy = total > 0 ? (100.0 * correct / total) : 0.0;
+    float wpm = strlen(input) / 5.0 / 1.0; 
+
+    printf("\nAkurasi: %.2f%%\nKecepatan: %.2f WPM\n", accuracy, wpm);
+    simpan_rekor("Tantangan Akurasi", accuracy, wpm);
+    printf("\nTekan Enter untuk kembali...");
+    while (getchar() != '\n');
+}
+
+void free_practice() {
+    clear_screen();
+    printf("=== MODE LATIHAN BEBAS ===\n\n");
+    char input[MAX_PHRASE_LENGTH];
+
+    while (1) {
+        int idx = rand() % jumlah_kalimat;
+        const char* phrase = kalimat_list[idx];
+
+        printf("\nKetik kalimat: %s\n", phrase);
+        printf("> ");
+        fgets(input, MAX_PHRASE_LENGTH, stdin);
+        input[strcspn(input, "\n")] = '\0';
+
+        printf("\nKamu mengetik: %s\n", input);
+        printf("\nLanjut latihan? (y/n): ");
+        char lanjut;
+        scanf(" %c", &lanjut);
+        getchar();
+        if (tolower(lanjut) != 'y') break;
+    }
+}
+
+int main() {
+    srand(time(NULL));
+    load_kalimat();
+    int choice;
+
+    while (1) {
+        clear_screen();
+        printf("=== APLIKASI TYPING TEST ===\n\n");
+        printf("1. Mode Tantangan Waktu (60 detik)\n");
+        printf("2. Mode Tantangan Akurasi\n");
+        printf("3. Mode Latihan Bebas\n");
+        printf("4. Lihat Rekor Pengetikan\n");
+        printf("5. Manajemen Kalimat\n");
+        printf("6. Keluar\n\n");
+        printf("Pilih opsi: ");
+        scanf("%d", &choice);
+        getchar();
+
+        switch (choice) {
+            case 1: timed_challenge(); break;
+            case 2: accuracy_challenge(); break;
+            case 3: free_practice(); break;
+            case 4: tampilkan_rekor(); break;
+            case 5: kelola_kalimat(); break;
+            case 6: clear_screen(); printf("Terima kasih telah menggunakan aplikasi Typing Test!\n"); return 0;
+            default: printf("Pilihan tidak valid. Tekan Enter untuk melanjutkan...\n"); while (getchar() != '\n');
+        }
+    }
+    return 0;
+}
+
