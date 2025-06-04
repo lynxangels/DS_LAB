@@ -6,23 +6,55 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <conio.h>
 #define CLEAR_COMMAND "cls"
 #else
+#include <unistd.h>
+#include <sys/select.h>
+#include <termios.h>
+#include <fcntl.h>
+#define CLEAR_COMMAND "clear"
 #endif
 
 #define MAX_PHRASES 100
 #define MAX_PHRASE_LENGTH 256
 #define KALIMAT_FILE "kalimat.txt"
 #define REKOR_FILE "rekor.txt"
+#define MAX_LIVES 5
 
 char kalimat_list[MAX_PHRASES][MAX_PHRASE_LENGTH];
 int jumlah_kalimat = 0;
+int current_lives = MAX_LIVES;
+int total_points = 0;
+
+typedef struct {
+    char nama[50];
+    char nim[200];
+    char funfact[150];
+} Character;
+
+
+typedef struct {
+    char mode[50];
+    float accuracy;
+    float wpm;
+    int points;
+    time_t timestamp;
+} RekorEntry;
+
+
+Character characters[4] = {
+    {"Diandra Sri Sakanti Argyanti Anggar", "NIM :  2802396354", "\"Funfact : Bisa bikin batik tulis\""},
+    {"Jesselyn Angelia Luwuk", "NIM : 2802420252", "\"Funfact : Bisa ketawa hantu\""},
+    {"Yosia Gracetheo Boimau", "NIM : 2802396354", "\"Funfact : Bisa apa aja selain coding tapi maksa masuk teknik informatika\""},
+    {"Nathanael Gevura", "NIM : 2802390344", "\"Funfact : Main drum dengan otodidak dan tidak suka makan bihun\""}
+};
 
 void clear_screen() {
     system(CLEAR_COMMAND);
 }
 
-void wait(int seconds) {
+void wait_seconds(int seconds) {
     #ifdef _WIN32
     Sleep(seconds * 1000);
     #else
@@ -30,10 +62,297 @@ void wait(int seconds) {
     #endif
 }
 
+#ifdef _WIN32
+void enable_ansi_colors() {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hOut == INVALID_HANDLE_VALUE) return;
+    DWORD dwMode = 0;
+    if (!GetConsoleMode(hOut, &dwMode)) return;
+    dwMode |= 0x0004;
+    SetConsoleMode(hOut, dwMode);
+}
+#else
+void enable_ansi_colors() {
+}
+#endif
+
+
+int input_with_timeout(char* buffer, int max_len, int timeout_seconds) {
+#ifdef _WIN32
+    DWORD start_time = GetTickCount();
+    int idx = 0;
+    while (1) {
+        if (_kbhit()) {
+            char c = _getch();
+            if (c == '\r') {
+                buffer[idx] = '\0';
+                printf("\n");
+                return idx;
+            } else if (c == '\b') {
+                if (idx > 0) {
+                    idx--;
+                    printf("\b \b");
+                }
+            } else if (idx < max_len - 1 && c >= 32 && c <= 126) {
+                buffer[idx++] = c;
+                printf("%c", c);
+            }
+        }
+        DWORD now = GetTickCount();
+        if ((now - start_time) >= (DWORD)(timeout_seconds*1000)) {
+            if (idx > 0) {
+                buffer[idx] = '\0';
+                printf("\n");
+                return idx;
+            }
+            return -1;
+        }
+        Sleep(10);
+    }
+#else
+    struct termios oldt, newt;
+    int oldf;
+    int idx = 0;
+    int c;
+
+    // Set terminal to raw mode
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+
+    time_t start_time = time(NULL);
+
+    printf("> ");
+    fflush(stdout);
+
+    while (1) {
+        time_t now = time(NULL);
+        if ((int)(now - start_time) >= timeout_seconds) {
+            if (idx > 0) {
+                buffer[idx] = '\0';
+                printf("\n");
+                tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+                fcntl(STDIN_FILENO, F_SETFL, oldf);
+                return idx;
+            } else {
+                tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+                fcntl(STDIN_FILENO, F_SETFL, oldf);
+                return -1;
+            }
+        }
+        c = getchar();
+        if (c != EOF) {
+            if (c == '\n') {
+                buffer[idx] = '\0';
+                printf("\n");
+                tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+                fcntl(STDIN_FILENO, F_SETFL, oldf);
+                return idx;
+            } else if (c == 127 || c == '\b') {
+                if (idx > 0) {
+                    idx--;
+                    printf("\b \b");
+                    fflush(stdout);
+                }
+            } else if (idx < max_len - 1 && c >= 32 && c <= 126) {
+                buffer[idx++] = c;
+                printf("%c", c);
+                fflush(stdout);
+            }
+        }
+        #ifdef _WIN32
+        Sleep(10);
+        #else
+        usleep(10000); 
+        #endif
+    }
+#endif
+}
+
+void popup_message(const char* message) {
+    printf("\n====================\n");
+    printf("%s\n", message);
+    printf("====================\n");
+    fflush(stdout);
+    wait_seconds(2);
+}
+
+
+void typing_effect(const char* text, int delay_ms) {
+    for (int i = 0; text[i] != '\0'; i++) {
+        printf("%c", text[i]);
+        fflush(stdout);
+        #ifdef _WIN32
+        Sleep(delay_ms);
+        #else
+        usleep(delay_ms * 1000);
+        #endif
+    }
+}
+
+
+void print_colored_input(const char* user_input, const char* correct_phrase) {
+    printf("Input  : ");
+    int len_user = strlen(user_input);
+    int len_corr = strlen(correct_phrase);
+    for (int i = 0; i < len_user; i++) {
+        if (i >= len_corr || user_input[i] != correct_phrase[i]) {
+            printf("\x1b[31m%c\x1b[0m", user_input[i]);
+        } else {
+            printf("%c", user_input[i]);
+        }
+    }
+    printf("\n");
+}
+
+void add_points(int points) {
+    total_points += points;
+    printf(" +%d poin!\n", points);
+}
+
+void show_lives() {
+    printf("\nNyawa: ");
+    for (int i = 0; i < current_lives; i++) {
+        printf("* ");
+    }
+    for (int i = current_lives; i < MAX_LIVES; i++) {
+        printf("  ");
+    }
+    printf("| Poin: %d\n", total_points);
+}
+
+
+void lose_life() {
+    if (current_lives > 0) {
+        current_lives--;
+        printf("\nUps! Kamu kehilangan 1 nyawa!\n");
+        if (current_lives == 0) {
+            printf("Game Over! Semua nyawa habis!\n");
+            printf("Tekan Enter untuk kembali ke menu...");
+            getchar();
+        }
+    }
+}
+
+
+// Function to display the introduction story and meet the characters
+void intro_story() {
+    clear_screen();
+    printf("=================================================================\n");
+    printf("                     TYPING MASTERS ACADEMY                    \n");
+    printf("=================================================================\n\n");
+
+    typing_effect("Selamat datang di Typing Masters Academy!\n", 50);
+    typing_effect("Tempat dimana master akan menguji kemampuan mengetik kalian...\n\n", 50);
+
+    printf("Tekan Enter untuk bertemu dengan para master...");
+    getchar();
+
+    for (int i = 0; i < 4; i++) {
+        clear_screen();
+        printf("=================================================================\n");
+        printf("                          MEET THE MASTERS                      \n");
+        printf("=================================================================\n");
+
+        printf("Nama: %s\n", characters[i].nama);
+        printf("%s\n\n", characters[i].nim);
+
+        typing_effect(characters[i].funfact, 30);
+        printf("\n\n");
+
+        printf("Tekan Enter untuk lanjut...");
+        getchar();
+        wait_seconds(1);
+    }
+
+    clear_screen();
+    printf("=================================================================\n");
+    printf("                       TENTANG TYPING TEST                      \n");
+    printf("=================================================================\n\n");
+
+    typing_effect("Hari ini kita akan menguji kemampuan TYPING TEST kalian!\n\n", 50);
+    
+    printf("Sebelum mulai, pasti kalian penasaran, apa itu Typing Test?\n\n");
+    printf("Typing Test adalah:\n");
+    typing_effect(" - Sebuah tes untuk mengukur kecepatan dan akurasi mengetik\n", 30);
+    typing_effect(" - Diukur dalam WPM (Words Per Minute) dan persentase akurasi\n", 30);
+    typing_effect(" - Membantu meningkatkan produktivitas dalam bekerja\n", 30);
+    typing_effect(" - Skill penting di era digital seperti sekarang\n\n", 30);
+
+    printf("Fitur Game:\n");
+    typing_effect(" - Sistem Lives: Kamu punya 5 nyawa\n", 30);
+    typing_effect(" - Sistem Poin: Dapatkan poin untuk setiap kata yang benar\n", 30);
+    typing_effect(" - Berbagai mode tantangan yang menarik\n", 30);
+    typing_effect(" - Tracking rekor personal\n\n", 30);
+
+    printf("Tekan Enter untuk lanjut...");
+    getchar();
+}
+
+// Function to ask the user if they are ready to start the game
+int ask_to_start() {
+    clear_screen();
+    printf("=================================================================\n");
+    printf("                         SIAP MEMULAI?                          \n");
+    printf("=================================================================\n\n");
+
+    char choice;
+    while (1) {
+        printf("Apakah kamu siap memulai petualangan typing test ini?\n\n");
+        printf("   [Y] Ya, aku siap!\n");
+        printf("   [N] Nanti saja\n\n");
+        printf("Pilihan (Y/N): ");
+        scanf(" %c", &choice);
+        getchar();
+
+        choice = tolower(choice);
+        if (choice == 'y' || choice == 'n') {
+            break;
+        } else {
+            printf("\nInput tidak valid. Silakan masukkan hanya 'Y' atau 'N'.\n\n");
+        }
+    }
+
+    return (choice == 'y');
+}
+
+// Function to say goodbye to the user
+void goodbye_message() {
+    clear_screen();
+    printf("=================================================================\n");
+    printf("                       SAMPAI JUMPA LAGI                         \n");
+    printf("=================================================================\n\n");
+
+    typing_effect("\"Aku tunggu di lain kesempatan ya!\"\n", 50);
+    typing_effect("- Tim Typing Masters Academy\n\n", 50);
+
+    printf("Terima kasih sudah berkunjung!\n");
+    printf("Kembali kapan saja kamu siap untuk tantangan!\n\n");
+
+    wait_seconds(3);
+}
+
+
 void load_kalimat() {
     FILE* file = fopen(KALIMAT_FILE, "r");
-    if (!file) return;
-
+    if (!file) {
+        strcpy(kalimat_list[0], "Latihan mengetik membuat sempurna");
+        strcpy(kalimat_list[1], "Kecepatan dan akurasi adalah kunci sukses");
+        strcpy(kalimat_list[2], "Teknologi berkembang pesat di era digital");
+        strcpy(kalimat_list[3], "Kemampuan mengetik sangat penting untuk produktivitas");
+        strcpy(kalimat_list[4], "Berlatih setiap hari akan meningkatkan skill");
+        strcpy(kalimat_list[5], "Tiada hari tanpa latihan, tiada skill tanpa usaha");
+        strcpy(kalimat_list[6], "Ketik dengan hati, hasilnya akan berbicara");
+        strcpy(kalimat_list[7], "Setiap ketikan adalah langkah menuju kesempurnaan");
+        strcpy(kalimat_list[8], "Jangan takut salah, karena kesalahan adalah guru terbaik");
+        strcpy(kalimat_list[9], "Latihan membuat kita lebih baik setiap hari");
+        strcpy(kalimat_list[10], "Ketekunan adalah kunci untuk menguasai seni mengetik");
+        jumlah_kalimat = 11;
+        return;
+    }
     jumlah_kalimat = 0;
     while (fgets(kalimat_list[jumlah_kalimat], MAX_PHRASE_LENGTH, file) && jumlah_kalimat < MAX_PHRASES) {
         kalimat_list[jumlah_kalimat][strcspn(kalimat_list[jumlah_kalimat], "\n")] = '\0';
@@ -45,179 +364,165 @@ void load_kalimat() {
 void save_kalimat() {
     FILE* file = fopen(KALIMAT_FILE, "w");
     if (!file) return;
-
     for (int i = 0; i < jumlah_kalimat; i++) {
         fprintf(file, "%s\n", kalimat_list[i]);
     }
     fclose(file);
 }
 
-void kelola_kalimat() {
-    int pilihan;
-    char input[MAX_PHRASE_LENGTH];
-    int idx;
-
-    while (1) {
-        clear_screen();
-        printf("=== MANAJEMEN KALIMAT ===\n");
-        printf("1. Lihat Kalimat\n");
-        printf("2. Tambah Kalimat\n");
-        printf("3. Edit Kalimat\n");
-        printf("4. Hapus Kalimat\n");
-        printf("5. Kembali\n");
-        printf("Pilih: ");
-        scanf("%d", &pilihan);
-        getchar();
-
-        switch (pilihan) {
-            case 1:
-                clear_screen();
-                printf("--- Daftar Kalimat ---\n");
-                for (int i = 0; i < jumlah_kalimat; i++) {
-                    printf("%d. %s\n", i + 1, kalimat_list[i]);
-                }
-                printf("\nTekan Enter untuk kembali...");
-                getchar();
-                break;
-            case 2:
-                if (jumlah_kalimat >= MAX_PHRASES) break;
-                printf("Masukkan kalimat baru: ");
-                fgets(input, MAX_PHRASE_LENGTH, stdin);
-                input[strcspn(input, "\n")] = '\0';
-                strcpy(kalimat_list[jumlah_kalimat++], input);
-                save_kalimat();
-                break;
-            case 3:
-                printf("Nomor kalimat yang ingin diedit: ");
-                scanf("%d", &idx);
-                getchar();
-                if (idx < 1 || idx > jumlah_kalimat) break;
-                printf("Kalimat baru: ");
-                fgets(input, MAX_PHRASE_LENGTH, stdin);
-                input[strcspn(input, "\n")] = '\0';
-                strcpy(kalimat_list[idx - 1], input);
-                save_kalimat();
-                break;
-            case 4:
-                printf("Nomor kalimat yang ingin dihapus: ");
-                scanf("%d", &idx);
-                getchar();
-                if (idx < 1 || idx > jumlah_kalimat) break;
-                for (int i = idx - 1; i < jumlah_kalimat - 1; i++) {
-                    strcpy(kalimat_list[i], kalimat_list[i + 1]);
-                }
-                jumlah_kalimat--;
-                save_kalimat();
-                break;
-            case 5:
-                return;
-        }
-    }
-}
-
-void simpan_rekor(const char* mode, float akurasi, float wpm) {
+void simpan_rekor(const char* mode, float akurasi, float wpm, int points) {
     FILE* file = fopen(REKOR_FILE, "a");
     if (!file) return;
     time_t now = time(NULL);
-    fprintf(file, "%s | %.2f%% | %.2f WPM | %s", mode, akurasi, wpm, ctime(&now));
+    fprintf(file, "%s | %.2f%% | %.2f WPM | %d pts | %ld\n", mode, akurasi, wpm, points, (long)now);
     fclose(file);
 }
 
-void tampilkan_rekor() {
-    clear_screen();
-    FILE* file = fopen(REKOR_FILE, "r");
-    if (!file) {
-        printf("Belum ada rekor.\n");
-    } else {
-        char line[256];
-        printf("=== DAFTAR REKOR ===\n\n");
-        while (fgets(line, sizeof(line), file)) {
-            printf("%s", line);
-        }
-        fclose(file);
-    }
-    printf("\nTekan Enter untuk kembali...");
-    while (getchar() != '\n');
-}
-
+// Function to challenge the user with a timed typing challenge
 void timed_challenge() {
+    const int total_duration = 60; 
+    enable_ansi_colors();
     clear_screen();
-    printf("=== MODE TANTANGAN WAKTU ===\n\n");
-    int start = time(NULL);
+    printf("=================================================================\n");
+    printf("                  TANTANGAN WAKTU (60 DETIK)                  \n");
+    printf("=================================================================\n\n");
+
+    if (jumlah_kalimat == 0) {
+        printf("Tidak ada kalimat untuk diketik!\n");
+        printf("Tekan Enter untuk kembali...");
+        getchar();
+        return;
+    }
+
+    show_lives();
+    printf("\nKetik sebanyak mungkin dalam 60 detik!\n");
+    printf("Tips: Fokus pada akurasi, kecepatan akan mengikuti!\n\n");
+    printf("Tekan Enter untuk mulai...");
+    getchar();
+
+    time_t start = time(NULL);
     int duration = 60;
     int word_count = 0;
     char input[MAX_PHRASE_LENGTH];
     int correct_chars = 0;
     int total_chars = 0;
+    int session_points = 0;
 
-    while (time(NULL) - start < duration && jumlah_kalimat > 0) {
+    while (current_lives > 0 && jumlah_kalimat > 0) {
+        
+        int elapsed = (int)difftime(time(NULL), start);
+        int remaining = duration - elapsed;
+        if (remaining <= 0) {
+            printf("\nWaktu anda sudah habis!\n");
+            break;
+        }
+
         int idx = rand() % jumlah_kalimat;
         const char* phrase = kalimat_list[idx];
 
+        clear_screen();
+        printf("Waktu tersisa: %d detik\n", remaining);
+        show_lives();
         printf("\nKetik kalimat: %s\n", phrase);
-        printf("> ");
-        fgets(input, MAX_PHRASE_LENGTH, stdin);
+        printf("   > ");
+
+        if (!fgets(input, MAX_PHRASE_LENGTH, stdin)) {
+            break;
+        }
         input[strcspn(input, "\n")] = '\0';
+
+        elapsed = (int)difftime(time(NULL), start);
+        if (elapsed >= duration) {
+            printf("\nWaktu anda sudah habis!\n");
+            break;
+        }
 
         int len = strlen(phrase);
-        for (int i = 0; i < len && input[i]; i++) {
-            if (input[i] == phrase[i]) correct_chars++;
+        int input_len = strlen(input);
+        int correct_in_word = 0;
+
+        for (int i = 0; i < len && i < input_len; i++) {
+            if (input[i] == phrase[i]) {
+                correct_chars++;
+                correct_in_word++;
+            }
             total_chars++;
         }
+
+        if (correct_in_word == len && input_len == len) {
+            int points = len / 2; 
+            add_points(points);
+            session_points += points;
+        } else {
+            lose_life();
+            popup_message("Nyawa anda berkurang 1");
+        }
+
         word_count++;
+
+        if (current_lives == 0) break;
     }
 
-    float accuracy = total_chars > 0 ? (100.0 * correct_chars / total_chars) : 0.0;
-    float wpm = word_count * (60.0);
-
-    printf("\nWaktu habis!\nAkurasi: %.2f%%\nKecepatan: %.2f WPM\n", accuracy, wpm);
-    simpan_rekor("Tantangan Waktu", accuracy, wpm);
-    printf("\nTekan Enter untuk kembali...");
-    while (getchar() != '\n');
-}
-
-void accuracy_challenge() {
     clear_screen();
-    printf("=== MODE TANTANGAN AKURASI ===\n\n");
-    if (jumlah_kalimat == 0) return;
-    int idx = rand() % jumlah_kalimat;
-    const char* phrase = kalimat_list[idx];
+    printf("=================================================================\n");
+    printf("                         WAKTU HABIS!                          \n");
+    printf("=================================================================\n\n");
 
-    printf("Ketik kalimat berikut dengan akurat:\n%s\n", phrase);
-    char input[MAX_PHRASE_LENGTH];
-    printf("> ");
-    fgets(input, MAX_PHRASE_LENGTH, stdin);
-    input[strcspn(input, "\n")] = '\0';
+    float accuracy = total_chars > 0 ? (100.0f * (float)correct_chars / (float)total_chars) : 0.0f;
+    float wpm = (float)word_count; 
 
-    int correct = 0;
-    int total = strlen(phrase);
-    for (int i = 0; i < total; i++) {
-        if (input[i] == phrase[i]) correct++;
-    }
-    float accuracy = total > 0 ? (100.0 * correct / total) : 0.0;
-    float wpm = strlen(input) / 5.0 / 1.0; 
+    printf("HASIL AKHIR:\n");
+    printf("   Akurasi: %.2f%%\n", accuracy);
+    printf("   Kecepatan: %.2f WPM\n", wpm);
+    printf("   Poin sesi: %d\n", session_points);
+    printf("   Nyawa tersisa: %d\n\n", current_lives);
 
-    printf("\nAkurasi: %.2f%%\nKecepatan: %.2f WPM\n", accuracy, wpm);
-    simpan_rekor("Tantangan Akurasi", accuracy, wpm);
-    printf("\nTekan Enter untuk kembali...");
-    while (getchar() != '\n');
+    total_points += session_points;
+    simpan_rekor("Tantangan Waktu", accuracy, wpm, session_points);
+
+    printf("Tekan Enter untuk kembali...");
+    getchar();
 }
 
+
+// Function to allow the user to practice typing freely
 void free_practice() {
     clear_screen();
-    printf("=== MODE LATIHAN BEBAS ===\n\n");
+    printf("=================================================================\n");
+    printf("                     LATIHAN BEBAS                               \n");
+    printf("=================================================================\n\n");
+
+    if (jumlah_kalimat == 0) {
+        printf("Tidak ada kalimat untuk diketik!\n");
+        printf("Tekan Enter untuk kembali...");
+        getchar();
+        return;
+    }
+
     char input[MAX_PHRASE_LENGTH];
 
-    while (1) {
+    while (current_lives > 0) {
         int idx = rand() % jumlah_kalimat;
         const char* phrase = kalimat_list[idx];
 
+        clear_screen();
+        printf("MODE LATIHAN BEBAS\n");
+        show_lives();
+
         printf("\nKetik kalimat: %s\n", phrase);
-        printf("> ");
+        printf("   > ");
         fgets(input, MAX_PHRASE_LENGTH, stdin);
         input[strcspn(input, "\n")] = '\0';
 
-        printf("\nKamu mengetik: %s\n", input);
+        printf("\nYang kamu ketik: %s\n", input);
+
+        if (strcmp(input, phrase) == 0) {
+            printf("SEMPURNA!\n");
+            add_points(10);
+        } else {
+            printf("Masih belajar, tidak apa-apa!\n");
+        }
+
         printf("\nLanjut latihan? (y/n): ");
         char lanjut;
         scanf(" %c", &lanjut);
@@ -226,34 +531,376 @@ void free_practice() {
     }
 }
 
-int main() {
-    srand(time(NULL));
-    load_kalimat();
-    int choice;
+// Function to handle the accuracy challenge
+void accuracy_challenge() {
+    const int total_duration = 60; 
+    enable_ansi_colors();
+    clear_screen();
+    printf("=================================================================\n");
+    printf("                     TANTANGAN AKURASI                           \n");
+    printf("=================================================================\n\n");
+
+    if (jumlah_kalimat == 0) {
+        printf("Tidak ada kalimat untuk diketik!\n");
+        printf("Tekan Enter untuk kembali...");
+        getchar();
+        return;
+    }
+
+    time_t start_time = time(NULL);
+    char input[MAX_PHRASE_LENGTH];
+
+    while (current_lives > 0) {
+        int elapsed = (int)(time(NULL) - start_time);
+        int remain = total_duration - elapsed;
+        if (remain <= 0) break;
+
+        clear_screen();
+        printf("Waktu tersisa: %d detik\n", remain);
+        show_lives();
+
+        int idx = rand() % jumlah_kalimat;
+        const char* phrase = kalimat_list[idx];
+
+        printf("\nKetik kalimat berikut dengan SEMPURNA dalam waktu yang tersisa:\n\n");
+        printf("%s\n\n", phrase);
+
+        int res = input_with_timeout(input, MAX_PHRASE_LENGTH, remain);
+        if (res == -1) {
+            popup_message("WAKTU HABIS!!!");
+            continue;
+        }
+
+        // Check if the input is empty
+        if (strlen(input) == 0) {
+            // Treat as mistakes equal to the length of the phrase
+            int mistakes = (int)strlen(phrase);
+            lose_life();
+            popup_message("Nyawa anda berkurang 1");
+            continue;
+        }
+
+        print_colored_input(input, phrase);
+
+        int mistakes = 0;
+        int len_phrase = (int)strlen(phrase);
+        int len_input = (int)strlen(input);
+        int compare_len = (len_input > len_phrase) ? len_phrase : len_input;
+
+        for (int i = 0; i < compare_len; i++) {
+            if (input[i] != phrase[i]) {
+                mistakes++;
+            }
+        }
+
+        if (len_input > len_phrase) {
+            mistakes += (len_input - len_phrase);
+        }
+
+        // If the player pressed Enter before finishing the phrase, count the remaining characters as mistakes
+        if (len_input < len_phrase) {
+            mistakes += (len_phrase - len_input);
+        }
+
+        if (mistakes > 0) {
+            lose_life();
+            popup_message("Nyawa anda berkurang 1");
+            if (current_lives <= 0) break;
+        } else {
+            int bonus_points = 20;
+            total_points += bonus_points;
+            printf("\nBagus! +%d poin!\n", bonus_points);
+            printf("Tekan Enter untuk lanjut...");
+            getchar();
+        }
+    }
+    clear_screen();
+    printf("Tantangan Akurasi selesai.\n");
+    printf("Sisa nyawa: %d\n", current_lives);
+    printf("Total poin: %d\n", total_points);
+
+    printf("\nTekan Enter untuk kembali ke menu...");
+    getchar();
+}
+
+int compare_rekor_points_desc(const void* a, const void* b) {
+    const RekorEntry* ra = (const RekorEntry*)a;
+    const RekorEntry* rb = (const RekorEntry*)b;
+    if (ra->points > rb->points) return -1;
+    else if (ra->points < rb->points) return 1;
+    else return 0;
+}
+
+int compare_rekor(const void* a, const void* b) {
+    const RekorEntry* ra = (const RekorEntry*)a;
+    const RekorEntry* rb = (const RekorEntry*)b;
+    // Sort ascending by timestamp (older first)
+    if (ra->timestamp < rb->timestamp) return -1;
+    else if (ra->timestamp > rb->timestamp) return 1;
+    else return 0;
+}
+
+// Function to display the Hall of Fame and manage records
+void tampilkan_rekor() {
+    clear_screen();
+    printf("==================================================================\n");
+    printf("                        HALL OF FAME                           \n");
+    printf("==================================================================\n\n");
+
+    FILE* file = fopen(REKOR_FILE, "r");
+    if (!file) {
+        printf("Belum ada rekor. Mulai bermain untuk membuat rekor pertama!\n");
+        printf("\nTekan Enter untuk kembali...");
+        getchar();
+        return;
+    }
+
+    RekorEntry entries[1000];
+    int count = 0;
+    char line[256];
+    while (fgets(line, sizeof(line), file) && count < 1000) {
+        RekorEntry* e = &entries[count];
+        char mode_buf[50];
+        float accuracy, wpm;
+        int points;
+        long ts;
+        int scanned = sscanf(line, "%49[^|]| %f%% | %f WPM | %d pts | %ld", mode_buf, &accuracy, &wpm, &points, &ts);
+        if (scanned == 5) {
+            strncpy(e->mode, mode_buf, sizeof(e->mode));
+            e->accuracy = accuracy;
+            e->wpm = wpm;
+            e->points = points;
+            e->timestamp = (time_t)ts;
+            count++;
+        }
+    }
+    fclose(file);
+
+    if (count == 0) {
+        printf("Belum ada rekor. Mulai bermain untuk membuat rekor pertama!\n");
+        printf("\nTekan Enter untuk kembali...");
+        getchar();
+        return;
+    }
+
+    int pilihan;
+    while (1) {
+        printf("Pilih metode pengurutan:\n");
+        printf("1. Urutkan berdasarkan waktu bermain (history)\n");
+        printf("2. Urutkan berdasarkan score tertinggi\n");
+        printf("3. Kembali\n");
+        printf("Pilihan (1-3): ");
+        if (scanf("%d", &pilihan) != 1) {
+            while(getchar() != '\n'); 
+            printf("Input tidak valid. Coba lagi.\n");
+            continue;
+        }
+        getchar(); 
+
+        if (pilihan == 1) {
+            qsort(entries, count, sizeof(RekorEntry), compare_rekor);
+        } else if (pilihan == 2) {
+            qsort(entries, count, sizeof(RekorEntry), compare_rekor_points_desc);
+        } else if (pilihan == 3) {
+            return;
+        } else {
+            printf("Pilihan tidak valid. Coba lagi.\n");
+            continue;
+        }
+
+        clear_screen();
+        printf("==================================================================\n");
+        printf("                        HALL OF FAME                           \n");
+        printf("==================================================================\n\n");
+
+        for (int i = 0; i < count; i++) {
+            char time_str[30];
+            struct tm* t = localtime(&entries[i].timestamp);
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", t);
+            printf("%d. %s | %.2f%% | %.2f WPM | %d pts | %s\n",
+                i + 1, entries[i].mode, entries[i].accuracy, entries[i].wpm, entries[i].points, time_str);
+        }
+
+        printf("\nTekan Enter untuk kembali ke menu Hall of Fame...");
+        getchar();
+    }
+}
+// Function to manage sentences (add, edit, delete)
+void kelola_kalimat() {
+    int pilihan;
+    char input[MAX_PHRASE_LENGTH];
+    int idx;
 
     while (1) {
         clear_screen();
-        printf("=== APLIKASI TYPING TEST ===\n\n");
-        printf("1. Mode Tantangan Waktu (60 detik)\n");
-        printf("2. Mode Tantangan Akurasi\n");
-        printf("3. Mode Latihan Bebas\n");
-        printf("4. Lihat Rekor Pengetikan\n");
-        printf("5. Manajemen Kalimat\n");
-        printf("6. Keluar\n\n");
-        printf("Pilih opsi: ");
+        printf("=================================================================\n");
+        printf("                     MANAJEMEN KALIMAT                       \n");
+        printf("=================================================================\n\n");
+        show_lives();
+        printf("\n1. Lihat Kalimat\n");
+        printf("2. Tambah Kalimat\n");
+        printf("3. Edit Kalimat\n");
+        printf("4. Hapus Kalimat\n");
+        printf("5. Kembali\n\n");
+        printf("Pilih: ");
+        scanf("%d", &pilihan);
+        getchar();
+
+        switch (pilihan) {
+            case 1:
+                clear_screen();
+                printf("Daftar Kalimat:\n\n");
+                for (int i = 0; i < jumlah_kalimat; i++) {
+                    printf("%d. %s\n", i + 1, kalimat_list[i]);
+                }
+                printf("\nTekan Enter untuk kembali...");
+                getchar();
+                break;
+            case 2:
+                if (jumlah_kalimat >= MAX_PHRASES) {
+                    printf("Maksimal kalimat tercapai!\n");
+                    wait_seconds(1);
+                    break;
+                }
+                printf("Masukkan kalimat baru: ");
+                fgets(input, MAX_PHRASE_LENGTH, stdin);
+                input[strcspn(input, "\n")] = '\0';
+                strcpy(kalimat_list[jumlah_kalimat++], input);
+                save_kalimat();
+                printf("Kalimat berhasil ditambahkan!\n");
+                wait_seconds(1);
+                break;
+            case 3:
+                printf("Nomor kalimat yang ingin diedit: ");
+                scanf("%d", &idx);
+                getchar();
+                if (idx < 1 || idx > jumlah_kalimat) {
+                    printf("Nomor tidak valid!\n");
+                    wait_seconds(1);
+                    break;
+                }
+                printf("Kalimat baru: ");
+                fgets(input, MAX_PHRASE_LENGTH, stdin);
+                input[strcspn(input, "\n")] = '\0';
+                strcpy(kalimat_list[idx - 1], input);
+                save_kalimat();
+                printf("Kalimat berhasil diedit!\n");
+                wait_seconds(1);
+                break;
+            case 4:
+                printf("Nomor kalimat yang ingin dihapus: ");
+                scanf("%d", &idx);
+                getchar();
+                if (idx < 1 || idx > jumlah_kalimat) {
+                    printf("Nomor tidak valid!\n");
+                    wait_seconds(1);
+                    break;
+                }
+                for (int i = idx - 1; i < jumlah_kalimat - 1; i++) {
+                    strcpy(kalimat_list[i], kalimat_list[i + 1]);
+                }
+                jumlah_kalimat--;
+                save_kalimat();
+                printf("Kalimat berhasil dihapus!\n");
+                wait_seconds(1);
+                break;
+            case 5:
+                return;
+            default:
+                printf("Pilihan tidak valid!\n");
+                wait_seconds(1);
+        }
+    }
+}
+
+void reset_game() {
+    current_lives = MAX_LIVES;
+    total_points = 0;
+}
+
+
+int main() {
+    srand((unsigned int)time(NULL));
+    load_kalimat();
+
+    intro_story();
+
+    if (!ask_to_start()) {
+        goodbye_message();
+        return 0;
+    }
+
+    reset_game();
+
+    int choice;
+    while (1) {
+        clear_screen();
+        printf("=================================================================\n");
+        printf("                   TYPING MASTERS ACADEMY                    \n");
+        printf("=================================================================\n\n");
+
+        show_lives();
+
+        printf("\nPILIH MODE PERMAINAN:\n\n");
+        printf("   1. Tantangan Waktu (60 detik)\n");
+        printf("   2. Tantangan Akurasi\n");
+        printf("   3. Latihan Bebas\n");
+        printf("   4. Lihat Hall of Fame\n");
+        printf("   5. Manajemen Kalimat\n");
+        printf("   6. Reset Game\n");
+        printf("   7. Keluar\n\n");
+
+        printf("Pilih opsi (1-7): ");
         scanf("%d", &choice);
         getchar();
 
         switch (choice) {
-            case 1: timed_challenge(); break;
-            case 2: accuracy_challenge(); break;
-            case 3: free_practice(); break;
-            case 4: tampilkan_rekor(); break;
-            case 5: kelola_kalimat(); break;
-            case 6: clear_screen(); printf("Terima kasih telah menggunakan aplikasi Typing Test!\n"); return 0;
-            default: printf("Pilihan tidak valid. Tekan Enter untuk melanjutkan...\n"); while (getchar() != '\n');
+            case 1:
+                if (current_lives > 0) timed_challenge();
+                else {
+                    printf("Tidak ada nyawa! Reset game dulu.\n");
+                    wait_seconds(2);
+                }
+                break;
+            case 2:
+                if (current_lives > 0) accuracy_challenge();
+                else {
+                    printf("Tidak ada nyawa! Reset game dulu.\n");
+                    wait_seconds(2);
+                }
+                break;
+            case 3:
+                if (current_lives > 0) free_practice();
+                else {
+                    printf("Tidak ada nyawa! Reset game dulu.\n");
+                    wait_seconds(2);
+                }
+                break;
+            case 4:
+                tampilkan_rekor();
+                break;
+            case 5:
+                kelola_kalimat();
+                break;
+            case 6:
+                reset_game();
+                printf("Game direset! Nyawa dan poin kembali ke awal.\n");
+                wait_seconds(2);
+                break;
+            case 7:
+                clear_screen();
+                printf("Terima kasih telah bermain di Typing Masters Academy!\n");
+                printf("Sampai jumpa lagi, Challenger!\n\n");
+                return 0;
+            default:
+                printf("Pilihan tidak valid. Coba lagi!\n");
+                wait_seconds(1);
+        }
+
+        if (current_lives == 0) {
+            printf("\nGame Over! Tekan Enter untuk lanjut...");
+            getchar();
         }
     }
     return 0;
 }
-
